@@ -1,0 +1,103 @@
+function getTRC20TransfersByDateRange() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Sheet1');
+  if (!sheet) {
+    sheet = SpreadsheetApp.getActiveSpreadsheet().insertSheet('Sheet1');
+  } else {
+    sheet.clear(); // Sayfayı temizle
+  }
+
+  // Başlıkları yaz
+  sheet.appendRow(['Transfer Hash (ID)', 'Gönderici Cüzdan Adresi', 'Alıcı Cüzdan Adresi', 'Miktar', 'Tarih']);
+
+  // API URL'sini tanımlayın
+  var address = '*****'; // Cüzdan adresi
+  var trc20Id = '*****'; // Tether USDT kontrat adresi
+  
+  // Tarihleri Unix zaman damgasına dönüştürün
+  var startDate = new Date(new Date().getFullYear(), new Date().getMonth(), 1); // Ayın ilk günü
+  var endDate = new Date(); // Bugün
+
+  var startTimestamp = Math.floor(startDate.getTime() / 1000);
+  var endTimestamp = Math.floor(endDate.getTime() / 1000);
+
+  // 8 saatlik döngü aralıklarını ayarla
+  var intervalHours = 8;
+  var currentStart = new Date(startDate);
+  var currentEnd = new Date(currentStart.getTime() + intervalHours * 60 * 60 * 1000);
+
+  // Son eklenen işlemin tarihini takip eden değişken
+  var lastDate = null;
+  
+  while (currentStart < endDate) {
+    var startTimestamp = Math.floor(currentStart.getTime() / 1000);
+    var endTimestamp = Math.floor(currentEnd.getTime() / 1000);
+    
+    // API URL'sini oluşturun
+    var url = `https://apilist.tronscanapi.com/api/transfer/trc20?address=${address}&trc20Id=${trc20Id}&start=0&limit=50&direction=0&reverse=true&db_version=1&start_timestamp=${startTimestamp}&end_timestamp=${endTimestamp}`;
+
+    try {
+      // API isteğini yapın
+      var response = UrlFetchApp.fetch(url);
+      var data = JSON.parse(response.getContentText());
+
+      // Geçici bir dizi içinde verileri sakla
+      var transactions = [];
+
+      // Verileri işleme
+      if (data && data.data) {
+        for (var i = 0; i < data.data.length; i++) {
+          var transaction = data.data[i];
+          var tx_id = transaction.hash;
+          var sender = transaction.from;
+          var receiver = transaction.to;
+          var amount = transaction.amount / Math.pow(10, data.tokenInfo.tokenDecimal);
+          var timestamp = new Date(transaction.block_timestamp);
+
+          // Tarihi istenen formata çevir
+          var formattedDate = Utilities.formatDate(timestamp, Session.getScriptTimeZone(), 'dd.MM.yyyy HH:mm:ss');
+          var dayDate = Utilities.formatDate(timestamp, Session.getScriptTimeZone(), 'dd.MM.yyyy 00:00:00');
+
+          // Eğer yeni bir güne geçildiyse, boş satır ve günün tarihini ekle
+          if (!lastDate || lastDate !== dayDate) {
+            sheet.appendRow(['', '', '', '', dayDate]); // Boş satır, sadece tarih yazılıyor
+            lastDate = dayDate; // Son işlenen tarihi güncelle
+          }
+
+          // Cüzdana giriş-çıkışı belirlemek için işaret ekleme
+          var sign = (receiver === address) ? '+' : '-';
+          var signedAmount = sign + amount.toFixed(6);
+
+          if (amount >= 1) {
+            transactions.push([tx_id, sender, receiver, signedAmount, formattedDate]);
+          }
+        }
+
+        // Verileri sayfaya yazma
+        for (var j = 0; j < transactions.length; j++) {
+          sheet.appendRow(transactions[j]);
+        }
+
+        // Her döngüden sonra E sütununa (Tarih) göre sıralama işlemi (A'dan Z'ye)
+        var lastRow = sheet.getLastRow();
+        if (lastRow > 1) {
+          sheet.getRange(2, 1, lastRow - 1, 5).sort(5); // 5. sütun Tarih sütunu
+        }
+
+      } else {
+        Logger.log('No data found for range: ' + currentStart.toISOString() + ' to ' + currentEnd.toISOString());
+      }
+    } catch (e) {
+      Logger.log('Request failed for range: ' + currentStart.toISOString() + ' to ' + currentEnd.toISOString() + '. Error: ' + e.message);
+      Utilities.sleep(120000); // 2 dakika bekleyin
+    }
+
+    // Sonraki döngü için tarihleri güncelle
+    currentStart = new Date(currentEnd);
+    currentEnd = new Date(currentStart.getTime() + intervalHours * 60 * 60 * 1000);
+
+    // Eğer son tarih ay sonunu geçtiyse, ay sonunu güncelle
+    if (currentEnd > endDate) {
+      currentEnd = new Date(endDate);
+    }
+  }
+}
